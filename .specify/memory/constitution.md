@@ -1,15 +1,18 @@
 <!--
 SYNC IMPACT REPORT
-Version: (new) 1.0.0
-Changes: Initial creation.
+Version: (old) 1.0.0 -> (new) 1.1.0
+Changes: Added Principle VI (Documentation Sync).
 Principles:
-1. Code Quality & Standards (New)
-2. Testing Strategy (New)
-3. User Experience Consistency (New)
-4. Performance Requirements (New)
-5. Rigorous Planning (New)
-Governance: Established version 1.0.0.
-Templates: Reviewed, no immediate updates required.
+1. Code Quality & Standards
+2. Testing Strategy
+3. User Experience Consistency
+4. Performance Requirements
+5. Rigorous Planning
+6. Documentation Sync (New)
+Governance: Updated version and amendment date.
+Templates:
+- .specify/templates/tasks-template.md: ✅ Updated to include explicit docs task.
+- .specify/templates/plan-template.md: ✅ Updated to include docs check.
 -->
 # Pulumi Scale Constitution
 
@@ -30,8 +33,11 @@ Systems must be designed for low latency and high efficiency. Performance regres
 ### V. Rigorous Planning
 No code is written without a well-researched, approved plan. 'Measure twice, cut once' applies to architecture and design.
 
+### VI. Documentation Sync
+Project documentation (README, docs/) must be kept in sync with code changes. Every feature implementation must include updates to relevant documentation to prevent drift.
+
 ## Governance
 
 All changes must follow the defined planning and review process.
 
-**Version**: 1.0.0 | **Ratified**: 2026-01-07 | **Last Amended**: 2026-01-07
+**Version**: 1.1.0 | **Ratified**: 2026-01-07 | **Last Amended**: 2026-01-07

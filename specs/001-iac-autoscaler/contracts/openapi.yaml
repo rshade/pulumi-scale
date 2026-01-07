@@ -1,0 +1,146 @@
+openapi: 3.0.0
+info:
+  title: PulumiScale Autoscaler API
+  version: 1.0.0
+  description: Sidecar service for dynamic Pulumi infrastructure scaling.
+
+security:
+  - BearerAuth: []
+
+paths:
+  /webhook/{pool}/cloudwatch:
+    post:
+      summary: Handle AWS CloudWatch SNS notifications
+      parameters:
+        - in: path
+          name: pool
+          schema:
+            type: string
+          required: true
+          description: The name of the worker pool defined in Stack Outputs
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              description: SNS JSON payload (often text/plain content type)
+      responses:
+        '200':
+          description: Scaling event processed
+        '400':
+          description: Invalid payload or pool not found
+        '401':
+          description: Unauthorized
+
+  /webhook/{pool}/prometheus:
+    post:
+      summary: Handle Prometheus Alertmanager webhooks
+      description: Expects an Alertmanager JSON payload. Must contain a label named `pool` that matches the `{pool}` path parameter or a configured pool name.
+      parameters:
+        - in: path
+          name: pool
+          schema:
+            type: string
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Alertmanager JSON payload with `alerts[].labels.pool`
+      responses:
+        '200':
+          description: Scaling event processed
+
+  /webhook/{pool}/count:
+    post:
+      summary: Explicitly set the absolute count for a pool
+      description: Requires `Authorization: Bearer <token>` header.
+      parameters:
+        - in: path
+          name: pool
+          schema:
+            type: string
+          required: true
+        - in: query
+          name: dryRun
+          schema:
+            type: boolean
+          description: If true, calculate and preview changes only
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value:
+                  type: integer
+                  minimum: 0
+              required:
+                - value
+      responses:
+        '200':
+          description: Scaling event processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScalingResult'
+
+  /webhook/{pool}/delta:
+    post:
+      summary: Increment or decrement the pool count
+      parameters:
+        - in: path
+          name: pool
+          schema:
+            type: string
+          required: true
+        - in: query
+          name: dryRun
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delta:
+                  type: integer
+                  description: Positive to add, negative to remove
+              required:
+                - delta
+      responses:
+        '200':
+          description: Scaling event processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScalingResult'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    ScalingResult:
+      type: object
+      properties:
+        pool:
+          type: string
+        oldValue:
+          type: integer
+        newValue:
+          type: integer
+        dryRun:
+          type: boolean
+        success:
+          type: boolean
+        error:
+          type: string
