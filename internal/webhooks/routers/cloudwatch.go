@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rshade/pulumi-scale/internal/webhooks"
@@ -24,7 +25,7 @@ func CloudWatchHandler(intentChan chan<- webhooks.ScalingIntent) http.HandlerFun
 			http.Error(w, "Failed to read body", http.StatusInternalServerError)
 			return
 		}
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 
 		// Minimal SNS Payload structure
 		type SNSPayload struct {
@@ -50,24 +51,10 @@ func CloudWatchHandler(intentChan chan<- webhooks.ScalingIntent) http.HandlerFun
 		}
 
 		// CloudWatch Alarm Message often comes as a JSON string inside the Message field.
-		// For simplicity in this iteration, we assume the Alarm signifies "Scale Up" or "Scale Down"
-		// based on some convention or configuration. 
-		// However, without a specific payload structure from the spec (it just says SNS JSON), 
-		// we'll implement a basic trigger.
-		// If the alarm payload contains details, we'd parse them here.
-		// For now, let's assume the existence of an alarm triggers a default action or check.
-		
-		// Refined logic: CloudWatch Alarms usually have NewStateValue ("ALARM").
-		// We'll normalize this to a generic signal.
-		// Ideally, the endpoint might be specific like /webhook/{pool}/cloudwatch?action=up
-		// But the spec says /webhook/{pool}/cloudwatch.
-		// Let's infer Action from the Message content if possible, or assume a default logic (e.g., +1).
-		// *Clarification needed/assumed*: The spec implies parsing logic.
-		// Let's parse the inner Message to check for Alarm state.
-
 		type AlarmMessage struct {
-			NewStateValue string `json:"NewStateValue"` // ALARM, OK, INSUFFICIENT_DATA
-			AlarmName     string `json:"AlarmName"`
+			NewStateValue    string `json:"NewStateValue"` // ALARM, OK, INSUFFICIENT_DATA
+			AlarmName        string `json:"AlarmName"`
+			AlarmDescription string `json:"AlarmDescription"`
 		}
 
 		var alarmMsg AlarmMessage
@@ -79,19 +66,76 @@ func CloudWatchHandler(intentChan chan<- webhooks.ScalingIntent) http.HandlerFun
 				return
 			}
 		} else {
-			// If not JSON, treat raw message as description?
-			// Fallback: Proceed as trigger.
+			http.Error(w, "Invalid CloudWatch alarm message", http.StatusBadRequest)
+			return
 		}
 
-		// Send intent
-		// Defaulting to Delta +1 for "CloudWatch Alarm" as a generic scaler signal if not specified.
-		// A robust implementation would look for specific data in the alarm description or dimension.
+		// Determine Scaling Action and Value
+		// Priority: Query Params > Alarm Description > Default
+
+		var action webhooks.IntentAction
+		var value int
+		var configFound bool
+
+		// 1. Check Query Parameters
+		q := r.URL.Query()
+		actionParam := q.Get("action")
+		valueParam := q.Get("value")
+
+		if actionParam != "" && valueParam != "" {
+			v, err := strconv.Atoi(valueParam)
+			if err == nil {
+				// Validate action
+				switch webhooks.IntentAction(actionParam) {
+				case webhooks.ActionDelta, webhooks.ActionSet:
+					action = webhooks.IntentAction(actionParam)
+					value = v
+					configFound = true
+				}
+			}
+		}
+
+		// 2. Check Alarm Description if not found in query params
+		if !configFound && alarmMsg.AlarmDescription != "" {
+			// Expected format: {"pulumiscale": {"action": "delta", "value": -1}}
+			type PulumiScaleConfig struct {
+				Action string `json:"action"`
+				Value  int    `json:"value"`
+			}
+			type DescriptionPayload struct {
+				PulumiScale PulumiScaleConfig `json:"pulumiscale"`
+			}
+
+			var descPayload DescriptionPayload
+			// Try to find the JSON object. It might be mixed with text.
+			// For simplicity, attempt to unmarshal the whole string or look for the JSON substring.
+			// If the description IS just the JSON, this works.
+			if err := json.Unmarshal([]byte(alarmMsg.AlarmDescription), &descPayload); err == nil {
+				if descPayload.PulumiScale.Action != "" {
+					switch webhooks.IntentAction(descPayload.PulumiScale.Action) {
+					case webhooks.ActionDelta, webhooks.ActionSet:
+						action = webhooks.IntentAction(descPayload.PulumiScale.Action)
+						value = descPayload.PulumiScale.Value
+						configFound = true
+					}
+				}
+			}
+		}
+
+		// 3. Default Fallback
+		if !configFound {
+			action = webhooks.ActionDelta
+			value = 1
+			// Log warning or info about default behavior
+			fmt.Printf("CloudWatchHandler: Using default scaling action (Delta +1) for pool %s\n", pool)
+		}
+
 		intent := webhooks.ScalingIntent{
 			TargetPool: pool,
-			Action:     webhooks.ActionDelta,
-			Value:      1, // Default step
+			Action:     action,
+			Value:      value,
 			Source:     "cloudwatch",
-			Reason:     "SNS Notification Received",
+			Reason:     fmt.Sprintf("CloudWatch Alarm: %s", alarmMsg.AlarmName),
 		}
 
 		intentChan <- intent
